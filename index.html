@@ -1,5 +1,405 @@
 <!DOCTYPE html>
-<html>
-<head><title>Soundbox Audio</title></head>
-<body>Audio library for Soundbox installation.</body>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Soundbox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono&family=Inter:wght@300&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  html, body {
+    width: 100%; height: 100%;
+    background: #f7f7f5;
+    color: #111;
+    font-family: 'Space Mono', monospace;
+    overflow: hidden;
+    user-select: none;
+  }
+  #loading-screen {
+    position: fixed;
+    inset: 0;
+    background: #f7f7f5;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    z-index: 100;
+  }
+  #loading-screen h1 {
+    font-family: 'Space Mono', monospace;
+    font-size: clamp(1.1rem, 2.5vw, 1.6rem);
+    font-weight: 400;
+    letter-spacing: -0.02em;
+  }
+  #loading-status {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.6rem;
+    color: #999;
+    letter-spacing: 0.06em;
+  }
+  #progress-bar {
+    width: min(300px, 70vw);
+    height: 1px;
+    background: #ddd;
+  }
+  #progress-fill {
+    height: 100%;
+    background: #111;
+    width: 0%;
+    transition: width 0.2s;
+  }
+  #main-screen {
+    display: none;
+    position: fixed;
+    inset: 0;
+  }
+  canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+  }
+  canvas.dragging { cursor: grabbing; }
+  #now-playing {
+    position: fixed;
+    bottom: 28px;
+    right: 32px;
+    text-align: right;
+    pointer-events: none;
+  }
+  #track-category {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.55rem;
+    color: #999;
+    letter-spacing: 0.12em;
+    margin-bottom: 5px;
+    text-transform: lowercase;
+  }
+  #track-name {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.8rem;
+    color: #111;
+    max-width: 300px;
+  }
+  #hint {
+    position: fixed;
+    bottom: 28px;
+    left: 32px;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.55rem;
+    color: #bbb;
+    letter-spacing: 0.06em;
+    pointer-events: none;
+    transition: opacity 0.6s;
+  }
+</style>
+</head>
+<body>
+
+<div id="loading-screen">
+  <h1>Soundbox</h1>
+  <div id="progress-bar"><div id="progress-fill"></div></div>
+  <div id="loading-status">loading sounds…</div>
+</div>
+
+<div id="main-screen">
+  <canvas id="c"></canvas>
+  <div id="now-playing">
+    <div id="track-category"></div>
+    <div id="track-name">—</div>
+  </div>
+  <div id="hint">spin the crank</div>
+</div>
+
+<script>
+const BASE = 'https://metaphysicalhorse.github.io/soundbox-audio';
+
+const SOUND_FILES = {
+  wind:     ['wind_1','wind_2','wind_3','wind_4'],
+  voices:   ['voice_1','voice_2','voice_4','voice_5','voice_6','voice_7','voice_8','voice_9'],
+  machines: ['machine_1','machine_2','machine_3','machine_4','machine_5'],
+  movement: ['movement_1','movement_2','movement_3','movement_4','movement_5'],
+  ambient:  ['ambient_1','ambient_2','ambient_3','ambient_4','ambient_5','ambient_6'],
+  vehicle:  ['vehicle_1','vehicle_2','vehicle_3','vehicle_4'],
+};
+
+const CATEGORIES = Object.keys(SOUND_FILES);
+
+const SPATIAL_PAN = {
+  wind:      0,
+  voices:    0.6,
+  machines:  1,
+  movement:  0,
+  ambient:  -1,
+  vehicle:  -0.6,
+};
+
+// ── Audio ─────────────────────────────────────────────────────
+let audioCtx;
+const decodedLibrary = {};
+const slots = [
+  { source: null, gain: null, cat: null },
+  { source: null, gain: null, cat: null },
+];
+let isAudioPlaying = false;
+let currentPlaybackRate = 1;
+
+async function loadAllSounds() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const allFiles = [];
+  CATEGORIES.forEach(cat => {
+    SOUND_FILES[cat].forEach(name => allFiles.push({ cat, name }));
+  });
+  const total = allFiles.length;
+  let loaded = 0;
+
+  const fill = document.getElementById('progress-fill');
+  const status = document.getElementById('loading-status');
+
+  CATEGORIES.forEach(cat => decodedLibrary[cat] = []);
+
+  await Promise.all(allFiles.map(async ({ cat, name }) => {
+    const folder = cat === 'voices' ? 'voices' : cat === 'machines' ? 'machines' : cat;
+    const url = `${BASE}/${cat}/${name}.wav`;
+    try {
+      const res = await fetch(url);
+      const buf = await res.arrayBuffer();
+      const decoded = await audioCtx.decodeAudioData(buf);
+      decodedLibrary[cat].push({ name, buffer: decoded });
+    } catch(e) {
+      console.warn('Failed to load', url, e);
+    }
+    loaded++;
+    fill.style.width = `${(loaded / total) * 100}%`;
+    status.textContent = `${loaded} / ${total} sounds`;
+  }));
+
+  status.textContent = 'ready';
+  setTimeout(() => {
+    document.getElementById('loading-screen').style.display = 'none';
+    document.getElementById('main-screen').style.display = 'block';
+    startCanvas();
+  }, 400);
+}
+
+function pickRandomCat(exclude = []) {
+  const available = CATEGORIES.filter(c => decodedLibrary[c]?.length && !exclude.includes(c));
+  if (!available.length) return CATEGORIES.find(c => decodedLibrary[c]?.length);
+  return available[Math.floor(Math.random() * available.length)];
+}
+
+function playSlot(slotIndex) {
+  if (!isAudioPlaying) return;
+  const otherCat = slots[1 - slotIndex]?.cat;
+  const cat = pickRandomCat(otherCat ? [otherCat] : []);
+  if (!cat) return;
+
+  const items = decodedLibrary[cat];
+  const item = items[Math.floor(Math.random() * items.length)];
+  const slot = slots[slotIndex];
+
+  if (slot.source) {
+    try { slot.source.onended = null; slot.source.stop(); } catch(e) {}
+  }
+
+  const panner = audioCtx.createStereoPanner();
+  panner.pan.value = SPATIAL_PAN[cat] ?? 0;
+  const gain = audioCtx.createGain();
+  gain.gain.value = 0.7;
+  const src = audioCtx.createBufferSource();
+  src.buffer = item.buffer;
+  src.playbackRate.value = Math.max(0.25, Math.min(3, currentPlaybackRate));
+  src.connect(gain);
+  gain.connect(panner);
+  panner.connect(audioCtx.destination);
+  src.start();
+  src.onended = () => { if (isAudioPlaying) playSlot(slotIndex); };
+
+  slot.source = src;
+  slot.gain = gain;
+  slot.cat = cat;
+
+  const cats = slots.map(s => s.cat).filter(Boolean);
+  document.getElementById('track-category').textContent = cats.join(' / ');
+  document.getElementById('track-name').textContent = item.name.replace(/_/g, ' ');
+}
+
+function startAudio() {
+  if (isAudioPlaying) return;
+  isAudioPlaying = true;
+  document.getElementById('hint').style.opacity = '0';
+  if (audioCtx?.state === 'suspended') audioCtx.resume();
+  playSlot(0);
+  setTimeout(() => { if (isAudioPlaying) playSlot(1); }, 800);
+}
+
+function stopAudio() {
+  isAudioPlaying = false;
+  slots.forEach(slot => {
+    if (slot.source) {
+      try {
+        slot.gain?.gain.setTargetAtTime(0, audioCtx.currentTime, 0.3);
+        setTimeout(() => { try { slot.source.stop(); } catch(e) {} }, 400);
+      } catch(e) {}
+      slot.cat = null;
+    }
+  });
+  document.getElementById('track-name').textContent = '—';
+  document.getElementById('track-category').textContent = '';
+  document.getElementById('hint').style.opacity = '1';
+}
+
+function setPlaybackRate(rate) {
+  currentPlaybackRate = Math.max(0.25, Math.min(3, rate));
+  slots.forEach(slot => {
+    if (slot.source) {
+      try { slot.source.playbackRate.value = currentPlaybackRate; } catch(e) {}
+    }
+  });
+}
+
+// ── Canvas & Crank ────────────────────────────────────────────
+let canvas, ctx;
+let W, H, CX, CY;
+let crankAngle = -Math.PI / 2;
+let angularVelocity = 0;
+let isDragging = false;
+let lastMouseAngle = 0;
+let lastMoveTime = 0;
+const FLYWHEEL_FRICTION = 0.992;
+const SPEED_THRESHOLD = 0.008;
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  CX = W / 2;
+  CY = H / 2;
+}
+
+function drawCrank(angle) {
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#f7f7f5';
+  ctx.fillRect(0, 0, W, H);
+
+  const r = Math.min(W, H) * 0.07;
+  const armLen = r * 2.6;
+  const handleW = r * 0.28;
+  const handleH = r * 0.7;
+  const armEndX = CX + Math.cos(angle) * armLen;
+  const armEndY = CY + Math.sin(angle) * armLen;
+
+  ctx.beginPath();
+  ctx.arc(CX, CY, r * 1.1, 0, Math.PI * 2);
+  ctx.strokeStyle = '#ddd';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(CX, CY);
+  ctx.lineTo(armEndX, armEndY);
+  ctx.strokeStyle = '#111';
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  ctx.save();
+  ctx.translate(armEndX, armEndY);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.arc(0, 0, handleW * 0.9, 0, Math.PI * 2);
+  ctx.fillStyle = '#111';
+  ctx.fill();
+  ctx.restore();
+
+  ctx.beginPath();
+  ctx.arc(CX, CY, r * 0.42, 0, Math.PI * 2);
+  ctx.fillStyle = '#111';
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(CX, CY, r * 0.12, 0, Math.PI * 2);
+  ctx.fillStyle = '#f7f7f5';
+  ctx.fill();
+}
+
+function loop() {
+  requestAnimationFrame(loop);
+  if (!isDragging && Math.abs(angularVelocity) > 0.0001) {
+    angularVelocity *= FLYWHEEL_FRICTION;
+    crankAngle += angularVelocity;
+    const speed = Math.abs(angularVelocity);
+    setPlaybackRate(speed / 0.05);
+    if (speed > SPEED_THRESHOLD) {
+      if (!isAudioPlaying) startAudio();
+    } else {
+      angularVelocity = 0;
+      if (isAudioPlaying) stopAudio();
+    }
+  }
+  drawCrank(crankAngle);
+}
+
+function getAngle(e) {
+  const x = (e.touches ? e.touches[0].clientX : e.clientX) - CX;
+  const y = (e.touches ? e.touches[0].clientY : e.clientY) - CY;
+  return Math.atan2(y, x);
+}
+
+function onDown(e) {
+  isDragging = true;
+  canvas.classList.add('dragging');
+  lastMouseAngle = getAngle(e);
+  lastMoveTime = performance.now();
+  angularVelocity = 0;
+  document.getElementById('hint').style.opacity = '0';
+  if (audioCtx?.state === 'suspended') audioCtx.resume();
+}
+
+function onMove(e) {
+  if (!isDragging) return;
+  e.preventDefault();
+  const angle = getAngle(e);
+  const now = performance.now();
+  let delta = angle - lastMouseAngle;
+  if (delta > Math.PI) delta -= Math.PI * 2;
+  if (delta < -Math.PI) delta += Math.PI * 2;
+  const dt = (now - lastMoveTime) / 1000;
+  if (dt > 0) angularVelocity = delta / dt;
+  crankAngle += delta;
+  lastMouseAngle = angle;
+  lastMoveTime = now;
+  const speed = Math.abs(angularVelocity);
+  setPlaybackRate(speed / 0.05);
+  if (speed > SPEED_THRESHOLD * 5 && !isAudioPlaying) startAudio();
+}
+
+function onUp() {
+  isDragging = false;
+  canvas.classList.remove('dragging');
+}
+
+function startCanvas() {
+  canvas = document.getElementById('c');
+  ctx = canvas.getContext('2d');
+  resize();
+  window.addEventListener('resize', () => { resize(); drawCrank(crankAngle); });
+  canvas.addEventListener('mousedown', onDown);
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+  canvas.addEventListener('touchstart', onDown, { passive: true });
+  canvas.addEventListener('touchmove', onMove, { passive: false });
+  canvas.addEventListener('touchend', onUp);
+  loop();
+}
+
+loadAllSounds();
+</script>
+</body>
 </html>
