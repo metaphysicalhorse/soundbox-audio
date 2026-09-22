@@ -14,7 +14,7 @@
   }
   html, body {
     width: 100%; height: 100%;
-    background: #f7f7f5;
+    background: #ffffff;
     color: #111;
     font-family: 'Space Mono', monospace;
     overflow: hidden;
@@ -23,7 +23,7 @@
   #loading-screen {
     position: fixed;
     inset: 0;
-    background: #f7f7f5;
+    background: #ffffff;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -69,11 +69,15 @@
   canvas.dragging { cursor: grabbing; }
   #now-playing {
     position: fixed;
-    bottom: 28px;
-    right: 32px;
-    text-align: right;
+    left: 50%;
+    top: calc(50% + 150px);
+    transform: translateX(-50%);
+    text-align: center;
     pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.6s;
   }
+  #now-playing.visible { opacity: 1; }
   #track-category {
     font-family: 'Space Mono', monospace;
     font-size: 0.55rem;
@@ -90,8 +94,10 @@
   }
   #hint {
     position: fixed;
-    bottom: 28px;
-    left: 32px;
+    left: 50%;
+    top: calc(50% + 150px);
+    transform: translateX(-50%);
+    text-align: center;
     font-family: 'Space Mono', monospace;
     font-size: 0.55rem;
     color: #888;
@@ -229,6 +235,7 @@ function playSlot(slotIndex) {
   const cats = slots.map(s => s.cat).filter(Boolean);
   document.getElementById('track-category').textContent = cats.join(' / ');
   document.getElementById('track-name').textContent = item.name.replace(/_/g, ' ');
+  document.getElementById('now-playing').classList.add('visible');
 }
 
 function startAudio() {
@@ -253,6 +260,7 @@ function stopAudio() {
   });
   document.getElementById('track-name').textContent = '—';
   document.getElementById('track-category').textContent = '';
+  document.getElementById('now-playing').classList.remove('visible');
   document.getElementById('hint').style.opacity = '1';
 }
 
@@ -296,7 +304,7 @@ function resize() {
 
 function drawCrank(angle) {
   ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = '#f7f7f5';
+  ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, W, H);
 
   if (!crankImgLoaded) return;
